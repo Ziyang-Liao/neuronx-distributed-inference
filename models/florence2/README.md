@@ -138,3 +138,49 @@ Implementing dual-cache on Neuron is complex. Since Florence-2-base is small (6 
 ## License
 
 Apache 2.0
+
+## Version 2: Projection on Neuron
+
+### What Changed
+
+v2 compiles the projection layer to Neuron instead of running it on CPU.
+
+| Component | v1 | v2 |
+|-----------|----|----|
+| Vision Stages | Neuron | Neuron |
+| Projection | **CPU** | **Neuron** |
+| Encoder | Neuron | Neuron |
+| Decoder | Neuron | Neuron |
+
+### Performance Improvement
+
+| Metric | v1 | v2 | Improvement |
+|--------|----|----|-------------|
+| CAPTION Latency | 393ms | 370ms | **6%** |
+| QPS | 2.82 | 2.71 | - |
+
+Note: The improvement is modest because FP32 data transfer between CPU and Neuron is efficient. The bigger win is in BF16 where CPU lacks native support.
+
+### Usage
+
+```bash
+# Compile v2
+python -m models.florence2.compile_v2 --output ./compiled_fp32_v2
+
+# Inference
+python -m models.florence2.inference_v2 --image test.jpg --task "<CAPTION>"
+
+# Benchmark
+python -m models.florence2.inference_v2 --image test.jpg --benchmark
+```
+
+### Files
+
+```
+florence2/
+├── compile.py       # v1: Projection on CPU
+├── compile_v2.py    # v2: Projection on Neuron (recommended)
+├── inference_v2.py  # v2 inference engine
+├── modeling_*.py    # Model implementations
+└── README.md
+```

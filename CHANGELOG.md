@@ -2,13 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-01-29
+
+### Added
+- FP32 v2: Projection layer compiled to Neuron (`compile_v2.py`, `inference_v2.py`)
+
+### Performance
+- FP32 v2 CAPTION latency: 370ms (vs 393ms in v1, 6% improvement)
+
 ## [0.2.0] - 2026-01-29
 
 ### Added
 - BF16 optimized implementation (`models/florence2_bf16/`)
-- Projection layer compilation to Neuron (eliminates CPU bottleneck)
+- Projection layer compilation to Neuron (eliminates CPU bottleneck in BF16)
 - Comprehensive benchmarking scripts
 - Accuracy validation results
+- Examples and tests
 
 ### Performance
 - 45% throughput improvement over FP32
