@@ -163,3 +163,57 @@ Image (768x768)
 ## License
 
 Apache 2.0
+
+## Benchmarking Methodology
+
+### Hardware Configuration
+- Instance: inf2.8xlarge (2 NeuronCores, 32GB device memory)
+- vCPU: 32 cores
+- System Memory: 128GB
+- Neuron SDK: 2.x
+- PyTorch: 2.1+
+
+### Test Protocol
+1. **Warm-up**: 10 inference runs discarded
+2. **Measurement**: 100 runs for latency, 5 minutes for throughput
+3. **Input**: 768×768 RGB images (resized if necessary)
+4. **Metrics**: P50 latency reported, QPS = total_requests / elapsed_time
+
+### Reproducibility
+```bash
+# Single-core latency test
+python -m models.florence2_bf16.benchmark --image test.jpg --warmup 10 --runs 100
+
+# Dual-core throughput test (5 minutes)
+python -m models.florence2_bf16.benchmark --stress --duration 300 --core 0 &
+python -m models.florence2_bf16.benchmark --stress --duration 300 --core 1 &
+wait
+```
+
+## Limitations
+
+- **Input Size**: Fixed at 768×768 pixels (images are resized automatically)
+- **Max Generation Length**: 64 tokens (configurable via decoder buckets)
+- **Batch Size**: 1 (batching provides no benefit for this model size)
+- **Inferentia1**: Not supported (requires Neuron SDK 2.x features)
+- **Dynamic Tasks**: Region-based tasks require bbox coordinates in prompt
+
+## Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `RuntimeError: No Neuron devices` | Missing driver | `sudo apt install aws-neuronx-dkms` |
+| Compilation OOM | Insufficient memory | Use inf2.8xlarge or larger for compilation |
+| Slow first inference | Model loading | Add warm-up in initialization |
+| Lower than expected QPS | Single process | Run dual processes on separate NeuronCores |
+
+## Citation
+
+```bibtex
+@software{florence2_neuron,
+  title = {Florence-2 on AWS Inferentia2},
+  author = {Ziyang Liao},
+  year = {2026},
+  url = {https://github.com/Ziyang-Liao/neuronx-distributed-inference}
+}
+```
