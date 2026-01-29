@@ -1,43 +1,43 @@
-# Florence-2 FP32 版本
+# Florence-2 FP32 Implementation
 
-在 AWS Inferentia2 上运行 Florence-2 的 FP32 精度实现。
+FP32 precision implementation of Florence-2 on AWS Inferentia2.
 
-## 结果
+## Performance
 
-| 指标 | 数值 |
-|------|------|
-| CAPTION 延迟 | 393ms |
-| DETAILED_CAPTION 延迟 | 426ms |
-| OD 延迟 | 347ms |
-| OCR 延迟 | 333ms |
-| 单核 QPS | 2.82 |
-| 双核 QPS | 5.64 |
-| vs CPU 加速 | 5.2x |
+| Metric | Value |
+|--------|-------|
+| CAPTION Latency | 393ms |
+| DETAILED_CAPTION Latency | 426ms |
+| OD Latency | 347ms |
+| OCR Latency | 333ms |
+| Single-Core QPS | 2.82 |
+| Dual-Core QPS | 5.64 |
+| Speedup vs CPU | 5.2x |
 
-测试环境：inf2.8xlarge
+Tested on inf2.8xlarge.
 
-## 为什么需要这个版本？
+## Technical Background
 
-### 问题
+### The Problem
 
-Florence-2 使用 DaViT (Dual Attention Vision Transformer) 作为视觉编码器。DaViT 的实现有两个特点让 Neuron 编译器无法直接处理：
+Florence-2 uses DaViT (Dual Attention Vision Transformer) as its vision encoder. DaViT has two characteristics that prevent direct Neuron compilation:
 
-1. **动态 shape 传递**
+1. **Dynamic Shape Propagation**
    ```python
-   # 原始代码 (transformers 库)
+   # Original implementation (transformers library)
    def forward_features(self, x):
        for conv, block in zip(self.convs, self.blocks):
-           x, size = conv(x, size)  # size 是动态的 tuple
+           x, size = conv(x, size)  # size is a dynamic tuple
            x, size = block(x, size)
    ```
-   Neuron 编译器需要静态 shape 才能优化。
+   The Neuron compiler requires static shapes for optimization.
 
-2. **parallel_for 循环**
-   DaViT 的 attention 块内部使用了 Neuron 不支持的操作。
+2. **Unsupported Operations**
+   DaViT attention blocks contain `parallel_for` loops that Neuron cannot trace.
 
-### 解决方案：分阶段编译
+### Solution: Stage-wise Compilation
 
-将 DaViT 的 4 个阶段拆分为独立模块，每个模块固定输入输出 shape：
+Split DaViT into 4 independent stages, each with fixed input/output shapes:
 
 ```python
 class Stage(torch.nn.Module):
@@ -45,8 +45,8 @@ class Stage(torch.nn.Module):
         super().__init__()
         self.conv = conv
         self.block = block
-        self.in_size = in_size   # 固定！
-        self.out_size = out_size # 固定！
+        self.in_size = in_size   # Fixed at compile time
+        self.out_size = out_size # Fixed at compile time
     
     def forward(self, x):
         x, _ = self.conv(x, self.in_size)
@@ -54,40 +54,40 @@ class Stage(torch.nn.Module):
         return x
 ```
 
-### 各阶段 shape
+### Stage Dimensions
 
-| Stage | 输入 | 输出 | 通道数 |
-|-------|------|------|--------|
+| Stage | Input Shape | Output Shape | Channels |
+|-------|-------------|--------------|----------|
 | 0 | (1, 3, 768, 768) | (1, 36864, 128) | 128 |
 | 1 | (1, 36864, 128) | (1, 9216, 256) | 256 |
 | 2 | (1, 9216, 256) | (1, 2304, 512) | 512 |
 | 3 | (1, 2304, 512) | (1, 576, 1024) | 1024 |
 
-## 文件说明
+## Files
 
 ```
 florence2/
-├── compile.py                    # 编译脚本，详细注释
-├── modeling_florence2.py         # 基础推理类
-├── modeling_florence2_full.py    # 全 Neuron 推理 (推荐)
-├── modeling_florence2_kvcache.py # KV-Cache 版本 (实验性)
-├── __init__.py                   # 导出接口
-└── README.md                     # 本文件
+├── compile.py                    # Compilation script with detailed comments
+├── modeling_florence2.py         # Base inference class
+├── modeling_florence2_full.py    # Full Neuron inference (recommended)
+├── modeling_florence2_kvcache.py # KV-Cache variant (experimental)
+├── __init__.py
+└── README.md
 ```
 
-## 使用方法
+## Usage
 
-### 编译
+### Compilation
 
 ```bash
-# 基础编译 (Vision + Encoder)
+# Basic compilation (Vision + Encoder on Neuron)
 python -m models.florence2.compile --output ./compiled_fp32
 
-# 完整编译 (+ Decoder，推荐)
+# Full compilation (+ Decoder on Neuron, recommended)
 python -m models.florence2.compile --output ./compiled_fp32 --with-decoder
 ```
 
-### 推理
+### Inference
 
 ```python
 from models.florence2 import Florence2FullNeuron
@@ -97,43 +97,43 @@ result = model.generate("image.jpg", "<CAPTION>")
 print(result)
 ```
 
-## 三种推理类
+## Inference Classes
 
-| 类名 | Decoder 位置 | 速度 | 说明 |
-|------|--------------|------|------|
-| `Florence2ForConditionalGeneration` | CPU | 2.2x | 调试用 |
-| `Florence2WithKVCache` | CPU + Cache | 2.3x | 内存受限时 |
-| `Florence2FullNeuron` | Neuron | 5.2x | **生产推荐** |
+| Class | Decoder Location | Speedup | Description |
+|-------|------------------|---------|-------------|
+| `Florence2ForConditionalGeneration` | CPU | 2.2x | For debugging |
+| `Florence2WithKVCache` | CPU + Cache | 2.3x | Memory constrained |
+| `Florence2FullNeuron` | Neuron | 5.2x | **Production recommended** |
 
-## Decoder Bucket 策略
+## Decoder Bucket Strategy
 
-Decoder 是自回归的，每步输入长度 +1。Neuron 需要静态 shape，所以我们：
+The decoder is autoregressive—input length increases by 1 at each generation step. Since Neuron requires static shapes:
 
-1. 预编译多个 Decoder：seq_len = 1, 4, 8, 16, 32, 64
-2. 运行时选择 >= 当前长度的最小 bucket
-3. Padding 到 bucket 长度
+1. Pre-compile decoder models for multiple sequence lengths: 1, 4, 8, 16, 32, 64
+2. At runtime, select the smallest bucket >= current length
+3. Pad input to the bucket size
 
 ```python
-# 例：当前生成了 5 个 token
-# 选择 bucket 8，padding 3 个位置
+# Example: 5 tokens generated so far
+# Select bucket 8, pad 3 positions
 buckets = [1, 4, 8, 16, 32, 64]
 seq_len = 5
 bucket = next(b for b in buckets if b >= seq_len)  # = 8
 ```
 
-## 为什么不用 KV-Cache？
+## Why Not KV-Cache?
 
-Florence-2 的 Decoder 有两种 attention：
-- Self-attention (需要 cache)
-- Cross-attention (需要 encoder 输出的 cache)
+Florence-2 decoder has two attention types:
+- Self-attention (requires cache)
+- Cross-attention (requires encoder output cache)
 
-在 Neuron 上实现双 cache 比较复杂，而 Florence-2 模型较小 (6 层)，重新计算的开销可接受。Bucket 策略更简单且性能足够。
+Implementing dual-cache on Neuron is complex. Since Florence-2-base is small (6 layers), recomputation overhead is acceptable. The bucket strategy is simpler and provides sufficient performance.
 
-## 性能优化建议
+## Optimization Recommendations
 
-1. **使用 BF16 版本**：如果精度允许，BF16 版本快 45%
-2. **双进程部署**：inf2.xlarge 有 2 个 NeuronCore，跑两个进程
-3. **预热**：首次推理会加载模型，后续更快
+1. **Use BF16 version** if precision requirements allow—45% faster
+2. **Dual-process deployment** on inf2.xlarge (2 NeuronCores)
+3. **Warm-up** the model before serving—first inference loads compiled models
 
 ## License
 
