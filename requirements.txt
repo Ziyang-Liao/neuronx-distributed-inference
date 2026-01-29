@@ -1,0 +1,7 @@
+torch-neuronx>=2.1
+neuronx-cc
+transformers>=4.40.0,<4.45.0
+einops
+timm
+pillow
+requests
