@@ -1,5 +1,10 @@
 # Florence-2 on AWS Inferentia2
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![AWS Inferentia2](https://img.shields.io/badge/AWS-Inferentia2-orange.svg)](https://aws.amazon.com/machine-learning/inferentia/)
+[![Neuron SDK](https://img.shields.io/badge/Neuron%20SDK-2.x-green.svg)](https://awsdocs-neuron.readthedocs-hosted.com/)
+
 High-performance deployment of Microsoft Florence-2 vision-language model on AWS Inferentia2.
 
 ## Performance
@@ -162,7 +167,7 @@ Image (768x768)
 
 ## License
 
-Apache 2.0
+Apache 2.0 - See [LICENSE](LICENSE) for details.
 
 ## Benchmarking Methodology
 
@@ -206,6 +211,10 @@ wait
 | Compilation OOM | Insufficient memory | Use inf2.8xlarge or larger for compilation |
 | Slow first inference | Model loading | Add warm-up in initialization |
 | Lower than expected QPS | Single process | Run dual processes on separate NeuronCores |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Citation
 
