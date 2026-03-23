@@ -12,7 +12,7 @@
 - 传统分类模型（如 ResNet、EfficientNet）需要为每个类别准备训练数据，每新增一个品类就要重新训练，维护成本极高
 - 业务要求低延迟（< 500ms），7×24 小时不间断运行，成本非常敏感
 
-我花了几周时间，把微软的 Florence-2 视觉语言模型完整移植到了 AWS Inferentia2 上，最终实现了 BF16 精度下单核 4.09 QPS、双核 8.18 QPS 的吞吐，延迟仅 252ms。整个过程踩了不少坑，尤其是 Neuron SDK 对开源模型的兼容性问题。这篇博客完整记录了动机、技术挑战、解决方案和最终效果，希望对有类似需求的同学有帮助。
+我花了几周时间，把 Florence-2 视觉语言模型完整移植到了 AWS Inferentia2 上，最终实现了 BF16 精度下单核 4.09 QPS、双核 8.18 QPS 的吞吐，延迟仅 252ms。整个过程踩了不少坑，尤其是 Neuron SDK 对开源模型的兼容性问题。这篇博客完整记录了动机、技术挑战、解决方案和最终效果，希望对有类似需求的同学有帮助。
 
 **项目地址**：[https://github.com/Ziyang-Liao/neuronx-distributed-inference](https://github.com/Ziyang-Liao/neuronx-distributed-inference)
 
@@ -74,7 +74,7 @@ YOLO 速度快，但：
 
 ### 2.3 为什么选择 Florence-2
 
-Florence-2 是微软在 2024 年开源的轻量级视觉语言模型，它的独特之处在于：
+Florence-2 是 2024 年开源的轻量级视觉语言模型，它的独特之处在于：
 
 **1. 零样本能力——新增品类无需重新训练**
 
