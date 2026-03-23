@@ -42,6 +42,28 @@ etl/
 - 安全组仅允许 VPC CIDR 内部通信，禁止 0.0.0.0/0
 - S3 阻止所有公共访问，通过 VPC Gateway Endpoint 访问
 
+## 推荐执行顺序
+
+部分步骤有依赖关系，推荐按以下顺序执行：
+
+```
+Step 1  网络 (VPC/子网/SG/Endpoint)
+Step 2.1 RDS MySQL 创建（等待 available）
+Step 3  S3 Bucket
+Step 4  Redshift 创建（等待 available）
+Step 5  IAM Roles
+Step 7.1 Glue Catalog Database        ← Step 6 依赖此步
+Step 6  Lake Formation 权限
+Step 7.2 Glue Connection               ← 依赖 Step 1 (子网/SG) + Step 2 (RDS endpoint)
+Step 7.3 Glue Crawler + 运行
+Step 2.2 MySQL 初始化数据              ← 依赖 Step 7.2 (Connection)
+Step 8  Glue ETL Job 创建 + 运行
+Step 9  (阅读) 增量原理
+Step 10 Redshift 配置 (Schema/表/SP/MV/View)
+Step 11 定时调度
+Step 12 验证
+```
+
 ---
 
 ## Step 1: 网络配置
@@ -128,11 +150,19 @@ aws rds create-db-instance \
 
 ### 2.2 初始化数据
 
+> ⚠️ 此步骤依赖 Step 7 的 Glue Connection，请先完成 Step 3-7 后再回来执行此步。
+
 MySQL 在私有子网，通过 Glue Python Shell Job 初始化。脚本: [`glue_init_mysql.py`](glue_init_mysql.py)
 
 **关键: MySQL 表必须有 `updated_at TIMESTAMP ON UPDATE CURRENT_TIMESTAMP` + 索引**，这是增量抽取的基础。
 
 ```bash
+# 获取 RDS Endpoint（Step 2.1 创建完成后）
+aws rds describe-db-instances --db-instance-identifier etl-mysql \
+  --query 'DBInstances[0].Endpoint.Address' --output text --region us-east-1
+
+# 修改 glue_init_mysql.py 中的 host 为上面获取的 endpoint
+# 然后上传并运行
 aws s3 cp glue_init_mysql.py s3://<your-bucket>/scripts/
 aws glue create-job --name etl-init-mysql-data \
   --role arn:aws:iam::<account-id>:role/etl-glue-role \
@@ -227,6 +257,8 @@ aws redshift modify-cluster-iam-roles --cluster-identifier etl-redshift \
 
 ## Step 6: Lake Formation 权限
 
+> ⚠️ 此步骤依赖 Step 7.1 的 Glue Database，请先执行 Step 7.1 创建 `etl_catalog_db`，再回来执行此步。
+
 ```bash
 ACCOUNT="<account-id>"
 
@@ -277,7 +309,7 @@ aws glue start-crawler --name etl-mysql-crawler --region us-east-1
 
 脚本: [`glue_mysql_to_iceberg.py`](glue_mysql_to_iceberg.py) — 一个 Job 完成全部工作。
 
-### 创建 Job
+### 8.1 创建 Job
 
 ```bash
 aws s3 cp glue_mysql_to_iceberg.py s3://<your-bucket>/scripts/
@@ -294,7 +326,7 @@ aws glue create-job --name etl-mysql-to-iceberg \
   }' --region us-east-1
 ```
 
-### `--conf` 参数说明
+### 8.2 `--conf` 参数说明
 
 | 配置 | 作用 |
 |------|------|
@@ -304,7 +336,7 @@ aws glue create-job --name etl-mysql-to-iceberg \
 | `catalog-impl=GlueCatalog` | 用 Glue Data Catalog 管理元数据 |
 | `io-impl=S3FileIO` | S3 文件读写 |
 
-### 运行
+### 8.3 运行
 
 ```bash
 aws glue start-job-run --job-name etl-mysql-to-iceberg --region us-east-1
@@ -317,7 +349,7 @@ aws glue start-job-run --job-name etl-mysql-to-iceberg --region us-east-1
 
 ## Step 9: 增量抽取原理（重要）
 
-### 机制
+### 9.1 机制
 
 Glue Job Bookmark 记录 `updated_at` 最大值，下次只读大于该值的记录：
 
@@ -327,27 +359,27 @@ Glue Job Bookmark 记录 `updated_at` 最大值，下次只读大于该值的记
 第3次: 无新数据 → 0 条, 直接退出
 ```
 
-### 为什么用 `updated_at` 不用 `id`
+### 9.2 为什么用 `updated_at` 不用 `id`
 
 | Key | INSERT | UPDATE | 推荐 |
 |-----|--------|--------|------|
 | `id` | ✅ | ❌ 漏掉 | 不推荐 |
 | `updated_at` | ✅ | ✅ | **推荐** |
 
-### MySQL 表要求
+### 9.3 MySQL 表要求
 
 ```sql
 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 INDEX idx_updated_at (updated_at)
 ```
 
-### Bookmark 生效 3 个必要条件
+### 9.4 Bookmark 生效 3 个必要条件
 
 1. Job 参数: `--job-bookmark-option` = `job-bookmark-enable`
 2. 代码: `transformation_ctx="datasource"` 必须设置
 3. 代码末尾: `job.commit()` 必须调用
 
-### 容错
+### 9.5 容错
 
 - Job 失败 → bookmark 不更新 → 下次重读（MERGE 幂等，不会重复）
 - 手动重置: `aws glue reset-job-bookmark --job-name etl-mysql-to-iceberg`
@@ -355,6 +387,13 @@ INDEX idx_updated_at (updated_at)
 ---
 
 ## Step 10: Redshift 配置
+
+> Redshift 在私有子网，无法直连。以下 SQL 通过 **Redshift Data API** 执行：
+> ```bash
+> aws redshift-data execute-statement --cluster-identifier etl-redshift \
+>   --database etl_dw --db-user admin --sql "<SQL>" --region us-east-1
+> ```
+> 或使用 **Redshift Query Editor V2**（AWS 控制台，自动通过内网连接）。
 
 ### 10.1 外部 Schema（读 Iceberg）
 
@@ -551,6 +590,14 @@ cron 定时触发
 ---
 
 ## Step 12: 验证
+
+### 12.0 端到端验证脚本
+
+每步做完后可运行验证脚本检查所有资源状态：
+
+```bash
+bash etl/verify_workshop.sh
+```
 
 ### 12.1 插入更新 + 新增数据
 
