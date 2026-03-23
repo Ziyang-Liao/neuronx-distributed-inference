@@ -18,8 +18,10 @@ S3 Iceberg Table (Glue Catalog 管理)
     │  MERGE INTO iceberg_local (增量拉取, 幂等)
     │
 Redshift 本地表 iceberg_local
-    │
-    ▼ VIEW v_user_dimension (维度计算, 纯 SQL)
+    ├── mv_user_base (物化视图, AUTO REFRESH, 字段拼接/地址解析)
+    ├── mv_city_stats (物化视图, AUTO REFRESH, 城市聚合)
+    ├── mv_monthly_stats (物化视图, AUTO REFRESH, 日期聚合)
+    └── v_user_dimension (普通视图, 含 GETDATE() 动态计算)
 ```
 
 ## 文件结构
@@ -30,7 +32,8 @@ etl/
 ├── glue_mysql_to_iceberg.py     # 核心 ETL Job (Step 8)
 ├── glue_init_mysql.py           # MySQL 初始化数据 (Step 2)
 ├── glue_add_duplicates.py       # 测试: 插入重复/更新数据 (Step 12)
-└── glue_incremental_test.py     # 测试: 验证增量效果 (Step 12)
+├── glue_incremental_test.py     # 测试: 验证增量效果 (Step 12)
+└── verify_workshop.sh           # 端到端验证脚本 (每步做完可运行检查)
 ```
 
 ## 安全要求
@@ -492,16 +495,18 @@ SELECT user_segment, COUNT(*) FROM public.v_user_dimension GROUP BY 1;
 
 ## Step 11: 定时调度
 
+### 11.1 Glue Workflow（MySQL → Iceberg 自动化）
+
 ```bash
 aws glue create-workflow --name etl-iceberg-workflow \
   --description "MySQL -> Iceberg incremental ETL" --region us-east-1
 
-# 定时触发 Crawler
+# 定时触发 Crawler（频率按需调整: 每小时/每天）
 aws glue create-trigger --name etl-scheduled-trigger --type SCHEDULED \
   --schedule "cron(0 * * * ? *)" --workflow-name etl-iceberg-workflow \
   --actions '[{"CrawlerName":"etl-mysql-crawler"}]' --region us-east-1
 
-# Crawler 成功后触发 Job
+# Crawler 成功后触发 Iceberg Job
 aws glue create-trigger --name etl-after-crawler-trigger --type CONDITIONAL \
   --workflow-name etl-iceberg-workflow \
   --predicate '{"Conditions":[{"CrawlerName":"etl-mysql-crawler","LogicalOperator":"EQUALS","CrawlState":"SUCCEEDED"}]}' \
@@ -512,7 +517,36 @@ aws glue start-trigger --name etl-scheduled-trigger --region us-east-1
 aws glue start-trigger --name etl-after-crawler-trigger --region us-east-1
 ```
 
-> Redshift SP 可通过 Redshift Scheduler 或 EventBridge + Lambda 定时调用 `CALL sp_sync_from_iceberg()`
+### 11.2 Redshift 定时同步
+
+Glue Job 完成后，需要触发 Redshift SP 同步数据。两种方式：
+
+**方式 A: Redshift Query Scheduler（推荐，最简单）**
+
+在 Redshift Query Editor V2 中创建 Scheduled Query：
+```sql
+CALL public.sp_sync_from_iceberg();
+```
+
+**方式 B: EventBridge + Glue Job 状态变更触发 Lambda**
+
+Glue Job 成功后通过 EventBridge 触发 Lambda 调用 Redshift Data API 执行 SP。
+
+### 11.3 完整自动化流程
+
+```
+cron 定时触发
+    │
+    ▼ Crawler (更新 MySQL 元数据)
+    │ SUCCEEDED
+    ▼ Glue Job etl-mysql-to-iceberg (增量 + 脱敏 + MERGE)
+    │ SUCCEEDED
+    ▼ Redshift SP sp_sync_from_iceberg() (增量 MERGE 到本地表)
+    │
+    ▼ 物化视图 AUTO REFRESH (mv_user_base, mv_city_stats, mv_monthly_stats)
+    │
+    ▼ 查询就绪
+```
 
 ---
 
