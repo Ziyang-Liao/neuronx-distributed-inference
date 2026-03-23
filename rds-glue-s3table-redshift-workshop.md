@@ -363,6 +363,58 @@ aws glue create-job \
 | `MERGE INTO ... WHEN MATCHED AND s.updated_at > t.updated_at` | Only update if source is newer |
 | `TBLPROPERTIES ('format-version'='2')` | Iceberg v2 supports row-level MERGE |
 
+### ⚠️ 增量抽取原理 (重要)
+
+增量的核心是 **Glue Job Bookmark**，它记录每次运行读到的 `updated_at` 最大值，下次只读大于该值的记录。
+
+```
+第1次运行: SELECT * FROM user_data → 读取全部 12 条
+           bookmark 记录 max(updated_at) = 2026-03-23 16:08:00
+
+第2次运行: SELECT * FROM user_data WHERE updated_at > '2026-03-23 16:08:00'
+           → 只读取 2 条新增/更新的记录
+           bookmark 更新 max(updated_at) = 2026-03-23 17:30:00
+
+第3次运行: 如果没有新数据 → 读取 0 条, 直接退出
+```
+
+**为什么用 `updated_at` 而不是 `id`？**
+
+| Bookmark Key | 捕获 INSERT | 捕获 UPDATE | 推荐 |
+|-------------|------------|------------|------|
+| `id` | ✅ | ❌ 漏掉更新 | 不推荐 |
+| `updated_at` | ✅ | ✅ | **推荐** |
+
+**MySQL 表必须满足的条件：**
+
+```sql
+-- updated_at 必须有 ON UPDATE CURRENT_TIMESTAMP, 否则更新不会被捕获
+CREATE TABLE user_data (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ...
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_updated_at (updated_at)  -- 索引加速增量查询
+);
+```
+
+**Bookmark 生效的 3 个必要条件：**
+
+1. Job 参数: `--job-bookmark-option` = `job-bookmark-enable`
+2. 代码中: `transformation_ctx="datasource"` 必须设置（这是 bookmark 的标识符）
+3. 代码末尾: `job.commit()` 必须调用（保存 bookmark 状态）
+
+**容错机制：**
+
+- Job 失败 → bookmark 不更新 → 下次重新读取这批数据
+- 重复数据 → MERGE INTO 的 `ON t.id = s.id` 保证幂等，不会产生重复
+- 即使同一批数据被处理两次，结果也是正确的
+
+**手动重置 Bookmark（重新全量）：**
+
+```bash
+aws glue reset-job-bookmark --job-name etl-mysql-to-iceberg
+```
+
 ## Step 10: Redshift - Query Iceberg via Spectrum
 
 ```bash
