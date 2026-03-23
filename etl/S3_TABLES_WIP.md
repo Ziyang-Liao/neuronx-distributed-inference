@@ -1,53 +1,67 @@
-# S3 Tables 方案调研笔记（未完成）
+# S3 Tables 方案调研笔记
 
-## 状态：Glue 写入 ✅ | Redshift 读取 ❌
+## 状态：Glue 写入 ✅ | Redshift Provisioned 读取 ❌（Spectrum 引擎限制）
 
-## 已验证通过
+## Glue 5.0 写入 S3 Tables ✅ 已验证
 
-- Glue 5.0 通过 AWS analytics integration 写入 S3 Tables ✅
-- MERGE INTO 去重 ✅
-- 增量抽取 (bookmark) ✅
+- 增量抽取 (bookmark by updated_at) ✅
 - PII 脱敏 ✅
+- MERGE INTO 去重 ✅
+- 脚本: [`glue_mysql_to_s3tables.py`](glue_mysql_to_s3tables.py)
 
-### Glue 关键配置
+### 关键配置
 
 ```python
 spark.conf.set("spark.sql.catalog.s3t", "org.apache.iceberg.spark.SparkCatalog")
 spark.conf.set("spark.sql.catalog.s3t.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
-spark.conf.set("spark.sql.catalog.s3t.glue.id", "<account>:s3tablescatalog/<table-bucket-name>")
-spark.conf.set("spark.sql.catalog.s3t.warehouse", "s3://<table-bucket-name>/warehouse/")
+spark.conf.set("spark.sql.catalog.s3t.glue.id", "<account>:s3tablescatalog/<table-bucket>")
+spark.conf.set("spark.sql.catalog.s3t.warehouse", "s3://<table-bucket>/warehouse/")
 ```
 
-### 额外 IAM 需求
-- `AmazonS3TablesFullAccess` 托管策略
-- Lake Formation: 对 `s3tablescatalog/<bucket>` 的 Catalog + Database + Table 权限
+### 额外需求
+- IAM: `AmazonS3TablesFullAccess` 托管策略
+- Lake Formation: 对 `s3tablescatalog/<bucket>` 的 Catalog + Database + Table ALL 权限
+- Glue Job: `--datalake-formats iceberg`
 
-## 未通过：Redshift Provisioned Cluster 读取 S3 Tables
+---
 
-### 问题
-Redshift provisioned cluster 通过 Data API (db-user 认证) 无法查询 S3 Tables 的嵌套 catalog。
+## Redshift Provisioned Cluster 读取 S3 Tables ❌
 
-### 尝试过的方式
+### 官方文档
 
-| 方式 | 结果 |
-|------|------|
-| `CATALOG_ID '<account>:s3tablescatalog/<bucket>'` | Schema 创建成功，查询报 `Database etl not found` |
-| `CATALOG_ID '<account>:s3tablescatalog'` | Schema 创建成功，查询报 `Database etl not found` |
-| `CATALOG_ID '<account>:etl_iceberg_catalog'` (federated) | 同上 |
-| 三段式 `s3tablescatalog."bucket".etl.table` | `Could not find parent table` |
-| `awsdatacatalog."s3tablescatalog/bucket".etl.table` | `not authenticated with IAM credentials` |
+来源: [CREATE EXTERNAL SCHEMA](https://docs.aws.amazon.com/redshift/latest/dg/r_CREATE_EXTERNAL_SCHEMA.html)
 
-### 根因
-Redshift provisioned cluster 的 Spectrum 不支持嵌套 catalog 路径。
-AWS 文档说 Redshift 支持 S3 Tables，但可能仅限于：
-- Redshift Serverless（原生 IAM 认证）
-- Redshift Query Editor V2（自动处理 IAM）
-- Provisioned cluster 需要配置 IAM 认证而非 db-user
+> `CATALOG_ID` can be specified **only if** using **federated identity** (`IAM_ROLE 'SESSION'` 或 `CATALOG_ROLE 'SESSION'`)
 
-### 后续验证方向
-1. 尝试 Redshift Serverless
-2. 尝试 provisioned cluster 开启 IAM 认证
-3. 等 AWS 更新 Spectrum 对嵌套 catalog 的支持
+### 测试结果
 
-## 结论
-当前生产环境建议继续使用 **S3 Iceberg 方案**（README.md 中的方案），等 Redshift 对 S3 Tables 的支持更完善后再迁移。
+| 配置 | Schema 创建 | 找到 Database | 读取数据 | 问题 |
+|------|------------|--------------|---------|------|
+| `IAM_ROLE 'role-arn'` + `CATALOG_ID` | ✅ | ❌ | - | CATALOG_ID 被忽略，查默认 catalog |
+| `IAM_ROLE 'SESSION'` + `CATALOG_ID` (IAM 认证) | ✅ | ✅ | ❌ | S3 Tables 内部存储凭证错误 |
+| `CATALOG_ROLE 'SESSION'` + `CATALOG_ID` | ✅ | - | ❌ | 需要 federated identity 登录 |
+| `CATALOG_ROLE 'role-arn'` + `CATALOG_ID` | ✅ | ❌ | - | 同第一种，CATALOG_ID 被忽略 |
+
+### 根因分析
+
+1. **非 SESSION 模式**: Redshift Spectrum 忽略 `CATALOG_ID` 中的嵌套路径，只用 account ID 查默认 Glue Catalog
+2. **SESSION 模式**: 能正确解析嵌套 catalog 路径，找到 database 和 table，但 Spectrum 引擎用标准 S3 FileIO 读取 Iceberg metadata，而 S3 Tables 的内部存储桶需要通过 S3 Tables API 访问，导致凭证错误
+
+### 结论
+
+Redshift Provisioned Cluster 的 Spectrum 引擎**目前不支持读取 S3 Tables 的内部存储**。这是 Spectrum 引擎层面的限制，不是配置问题。
+
+AWS 文档列出 Redshift 支持 S3 Tables，可能指的是:
+- Redshift Query Editor V2（控制台，可能有特殊处理）
+- 未来的 Spectrum 引擎更新
+
+---
+
+## 建议
+
+**当前**: 继续使用 S3 Iceberg 方案（README.md），Redshift Spectrum 完全支持
+
+**未来迁移路径**: 等 AWS 更新 Redshift Spectrum 对 S3 Tables 内部存储的支持后，只需:
+1. 改 Glue Job 的 catalog 配置（已有 `glue_mysql_to_s3tables.py`）
+2. 改 Redshift 的 external schema 指向 s3tablescatalog
+3. 其余不变（SP、MV、View 都不用改）
