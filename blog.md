@@ -1,6 +1,6 @@
 # 把 Florence-2 搬上 AWS Inferentia2：成本降 38%、推理快 15 倍的实战指南
 
-> 当你需要对成百上千种物品做实时分类，GPU 方案太贵、纯 CPU 又太慢时，Inferentia2 + Florence-2 可能是最优解。
+> 当你需要低成本、低延迟地完成图像描述、目标检测、OCR、物品分类等视觉理解任务时，GPU 方案太贵、纯 CPU 又太慢——Inferentia2 可能是最优解。本文以 Florence-2 为例，展示了一套将开源视觉语言模型适配到 Neuron SDK 的通用方法论（Stage-wise 编译、Bucket 策略、BF16 优化），这套方案不局限于 Florence-2，任何因动态形状或算子不兼容而无法直接在 Inferentia2 上运行的模型，都可以参考同样的思路进行适配。
 
 ---
 
