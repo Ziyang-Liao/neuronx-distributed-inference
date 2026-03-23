@@ -408,9 +408,39 @@ $$ LANGUAGE plpgsql;
 - MERGE ON id：匹配则覆盖，不匹配则插入
 - 可重复执行，结果一致
 
-### 10.4 维度计算视图
+### 10.4 物化视图（AUTO REFRESH，预计算聚合）
 
-Redshift 原生支持 `||`、`SPLIT_PART()`、`DATEDIFF()` 等，**不需要 UDF**。
+物化视图预计算结果存储在本地，查询秒回。`AUTO REFRESH YES` 让 Redshift 在基表数据变化后自动刷新。
+
+> 注意：含 `GETDATE()`/`DATEDIFF()` 等可变函数的不支持 AUTO REFRESH，需用普通视图。
+
+```sql
+-- 用户基础维度（字段拼接、地址解析）
+CREATE MATERIALIZED VIEW public.mv_user_base AUTO REFRESH YES AS
+SELECT id, username, email,
+    username || ' <' || email || '>' AS display_name,
+    SPLIT_PART(email, '@', 2) AS email_domain,
+    SPLIT_PART(address, ',', 1) AS address_line1,
+    TRIM(SPLIT_PART(address, ',', 2)) AS city,
+    phone, address, created_at, updated_at
+FROM public.iceberg_local;
+
+-- 城市维度聚合
+CREATE MATERIALIZED VIEW public.mv_city_stats AUTO REFRESH YES AS
+SELECT TRIM(SPLIT_PART(address, ',', 2)) AS city,
+    COUNT(*) AS user_count
+FROM public.iceberg_local GROUP BY 1;
+
+-- 日期维度聚合
+CREATE MATERIALIZED VIEW public.mv_monthly_stats AUTO REFRESH YES AS
+SELECT created_at::DATE AS created_date,
+    COUNT(*) AS new_users
+FROM public.iceberg_local GROUP BY 1;
+```
+
+### 10.5 普通视图（含动态计算）
+
+含 `GETDATE()` 的计算必须用普通视图，每次查询实时计算。
 
 ```sql
 CREATE OR REPLACE VIEW public.v_user_dimension AS
@@ -432,13 +462,28 @@ SELECT
 FROM public.iceberg_local;
 ```
 
-### 10.5 执行同步 + 查询
+### 10.6 普通视图 vs 物化视图
+
+| | 普通视图 `v_user_dimension` | 物化视图 `mv_*` |
+|---|---|---|
+| 数据 | 实时（每次查都算） | 预计算快照 |
+| 速度 | 数据量大时慢 | 秒回 |
+| 适合 | 含 `GETDATE()` 等动态函数 | 静态字段拼接、聚合统计 |
+| 刷新 | 不需要 | AUTO REFRESH YES（自动） |
+| 限制 | 无 | 不支持可变函数 |
+
+### 10.7 执行同步 + 查询
 
 ```sql
--- 同步数据
+-- 同步数据（物化视图会自动刷新，无需手动 REFRESH）
 CALL public.sp_sync_from_iceberg();
 
--- 查询维度
+-- 查询物化视图（秒回）
+SELECT * FROM public.mv_user_base;
+SELECT * FROM public.mv_city_stats ORDER BY user_count DESC;
+SELECT * FROM public.mv_monthly_stats;
+
+-- 查询普通视图（实时计算）
 SELECT * FROM public.v_user_dimension;
 SELECT user_segment, COUNT(*) FROM public.v_user_dimension GROUP BY 1;
 ```
