@@ -44,24 +44,28 @@ etl/
 
 ## 推荐执行顺序
 
-部分步骤有依赖关系，推荐按以下顺序执行：
+部分步骤有依赖关系，标注了可并行的步骤：
 
 ```
-Step 1  网络 (VPC/子网/SG/Endpoint)
-Step 2.1 RDS MySQL 创建（等待 available）
-Step 3  S3 Bucket
-Step 4  Redshift 创建（等待 available）
-Step 5  IAM Roles
-Step 7.1 Glue Catalog Database        ← Step 6 依赖此步
-Step 6  Lake Formation 权限
-Step 7.2 Glue Connection               ← 依赖 Step 1 (子网/SG) + Step 2 (RDS endpoint)
-Step 7.3 Glue Crawler + 运行
-Step 2.2 MySQL 初始化数据              ← 依赖 Step 7.2 (Connection)
-Step 8  Glue ETL Job 创建 + 运行
-Step 9  (阅读) 增量原理
-Step 10 Redshift 配置 (Schema/表/SP/MV/View)
-Step 11 定时调度
-Step 12 验证
+Step 1   网络 (VPC/子网/SG/Endpoint)
+Step 2.1 RDS MySQL 创建 ──────────────┐
+Step 3   S3 Bucket                     ├── 可并行，互不依赖
+Step 4   Redshift 创建 ───────────────┘
+         ↓ 等待 RDS + Redshift available（约 5 分钟）
+Step 5.1 Glue IAM Role ──────────────┐
+Step 5.2 Redshift IAM Role            ├── 可并行
+Step 7.1 Glue Catalog Database ───────┘
+Step 6   Lake Formation 权限           ← 依赖 Step 5 + Step 7.1
+Step 7.2 Glue Connection               ← 依赖 Step 1 (子网/SG) + Step 2.1 (RDS endpoint)
+Step 7.3 Glue Crawler + 运行 ─────────┐
+Step 2.2 MySQL 初始化数据 ─────────────┤ 可并行（都依赖 Step 7.2 Connection）
+Step 5.2+ Redshift IAM Role 关联 ──────┘ 可并行（依赖 Step 4 + Step 5.2）
+         ↓ 等待 Crawler + Init 完成
+Step 8   Glue ETL Job 创建 + 运行
+Step 9   (阅读) 增量原理
+Step 10  Redshift 配置 (Schema/表/SP/MV/View)
+Step 11  定时调度
+Step 12  验证
 ```
 
 ---
