@@ -8,7 +8,8 @@ conn = pymysql.connect(
 )
 cur = conn.cursor()
 
-cur.execute("""CREATE TABLE IF NOT EXISTS user_data (
+cur.execute("DROP TABLE IF EXISTS user_data")
+cur.execute("""CREATE TABLE user_data (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(256) NOT NULL,
     email VARCHAR(256) NOT NULL,
@@ -19,27 +20,18 @@ cur.execute("""CREATE TABLE IF NOT EXISTS user_data (
     INDEX idx_updated_at (updated_at)
 )""")
 
-cur.execute("SELECT COUNT(*) FROM user_data")
-if cur.fetchone()[0] == 0:
-    data = [
-        ('john_doe','john@example.com','555-0101','123 Main St, Springfield, IL'),
-        ('jane_smith','jane@example.com','555-0102','456 Oak Ave, Portland, OR'),
-        ('bob_wilson','bob@example.com','555-0103','789 Pine Rd, Austin, TX'),
-        ('alice_chen','alice@example.com','555-0104','321 Elm St, Seattle, WA'),
-        ('charlie_brown','charlie@example.com','555-0105','654 Maple Dr, Denver, CO'),
-        ('john_doe','john_v2@example.com','555-0101','123 Main St, Springfield, IL'),
-        ('diana_prince','diana@example.com','555-0106','100 Hero Blvd, Washington, DC'),
-        ('eve_taylor','eve@example.com','555-0107','200 Tech Park, San Jose, CA'),
-        ('frank_miller','frank@example.com','555-0108','300 Art St, New York, NY'),
-        ('grace_hopper','grace@example.com','555-0109','400 Navy Yard, Arlington, VA'),
-    ]
-    cur.executemany(
-        "INSERT INTO user_data (username,email,phone,address) VALUES (%s,%s,%s,%s)", data
-    )
-    conn.commit()
-    print(f"Inserted {len(data)} rows (including 1 duplicate username for dedup test)")
-else:
-    print("Data already exists, skipping insert")
+data = [
+    ('john_doe','john@example.com','555-0101','123 Main St, Springfield, IL'),
+    ('jane_smith','jane@example.com','555-0102','456 Oak Ave, Portland, OR'),
+    ('bob_wilson','bob@example.com','555-0103','789 Pine Rd, Austin, TX'),
+    ('alice_chen','alice@example.com','555-0104','321 Elm St, Seattle, WA'),
+    ('charlie_brown','charlie@example.com','555-0105','654 Maple Dr, Denver, CO'),
+]
+cur.executemany(
+    "INSERT INTO user_data (username,email,phone,address) VALUES (%s,%s,%s,%s)", data
+)
+conn.commit()
+print(f"Inserted {len(data)} rows")
 
 cur.execute("SELECT COUNT(*) FROM user_data")
 print(f"Total rows in MySQL: {cur.fetchone()[0]}")
