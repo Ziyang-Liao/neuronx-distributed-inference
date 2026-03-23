@@ -52,7 +52,7 @@ spark.sql("""
         id BIGINT, username STRING, email STRING, phone STRING,
         address STRING, created_at TIMESTAMP, updated_at TIMESTAMP
     ) USING iceberg
-    LOCATION 's3://etl-pipeline-data-073090110765/iceberg/user_data/'
+    LOCATION 's3://<your-bucket>/iceberg/user_data/'
     TBLPROPERTIES ('format-version'='2')
 """)
 

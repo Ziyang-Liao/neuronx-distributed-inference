@@ -2,8 +2,8 @@
 import pymysql
 
 conn = pymysql.connect(
-    host='etl-mysql.cuf6dqeperny.us-east-1.rds.amazonaws.com',
-    port=3306, user='admin', password='admin123', database='etl_source'
+    host='<rds-endpoint>',
+    port=3306, user='admin', password='<your-password>', database='etl_source'
 )
 cur = conn.cursor()
 

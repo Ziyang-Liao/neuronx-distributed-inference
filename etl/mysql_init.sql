@@ -1,5 +1,5 @@
 -- MySQL: Create sample source table
--- Run this on etl-mysql.cuf6dqeperny.us-east-1.rds.amazonaws.com:3306/etl_source
+-- Run this on <rds-endpoint>:3306/etl_source
 
 CREATE TABLE IF NOT EXISTS user_data (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

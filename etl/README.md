@@ -32,7 +32,7 @@ Redshift (private)
 | VPC | vpc-07288bbb688c103a8 (ab3-vpc) | - |
 | Private Subnets | subnet-00963b92b901f7fdb (1a), subnet-03673d71d15c2dc86 (1b) | Private only |
 | Security Group | sg-0147a8c2b499bdbd4 | VPC CIDR only |
-| S3 Bucket | etl-pipeline-data-073090110765 | VPC Endpoint, all public blocked |
+| S3 Bucket | <your-bucket> | VPC Endpoint, all public blocked |
 | S3 VPC Endpoint | vpce-01f894f95fa103342 | Gateway type |
 | RDS MySQL | etl-mysql | Private, no public access |
 | Redshift | etl-redshift | Private, no public access |
@@ -55,12 +55,12 @@ Redshift (private)
 
 ### 1. Initialize MySQL
 ```bash
-mysql -h etl-mysql.cuf6dqeperny.us-east-1.rds.amazonaws.com -u admin -padmin123 etl_source < etl/mysql_init.sql
+mysql -h <rds-endpoint> -u admin -p<your-password> etl_source < etl/mysql_init.sql
 ```
 
 ### 2. Initialize Redshift
 ```bash
-psql -h etl-redshift.cnib5syzt6zq.us-east-1.redshift.amazonaws.com -p 5439 -U admin -d etl_dw < etl/redshift_ddl.sql
+psql -h <redshift-endpoint> -p 5439 -U admin -d etl_dw < etl/redshift_ddl.sql
 ```
 
 ### 3. Run Pipeline Manually

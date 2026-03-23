@@ -7,11 +7,11 @@ import redshift_connector
 from datetime import datetime
 
 today = datetime.utcnow().strftime('%Y-%m-%d')
-s3_incremental_path = f's3://etl-pipeline-data-073090110765/data/masked/dt={today}/'
+s3_incremental_path = f's3://<your-bucket>/data/masked/dt={today}/'
 
 conn = redshift_connector.connect(
-    host='etl-redshift.cnib5syzt6zq.us-east-1.redshift.amazonaws.com',
-    port=5439, database='etl_dw', user='admin', password='Admin123!'
+    host='<redshift-endpoint>',
+    port=5439, database='etl_dw', user='admin', password='<your-password>'
 )
 conn.autocommit = True
 cur = conn.cursor()
@@ -21,7 +21,7 @@ sqls = [
     "CREATE TEMP TABLE staging (LIKE public.user_data)",
 
     # 2. COPY only today's incremental partition
-    f"COPY staging FROM '{s3_incremental_path}' IAM_ROLE 'arn:aws:iam::073090110765:role/etl-redshift-s3-role' FORMAT AS PARQUET",
+    f"COPY staging FROM '{s3_incremental_path}' IAM_ROLE 'arn:aws:iam::<account-id>:role/etl-redshift-s3-role' FORMAT AS PARQUET",
 
     # 3. Dedup within incremental batch (same id may appear multiple times in one batch)
     """CREATE TEMP TABLE staging_deduped AS
